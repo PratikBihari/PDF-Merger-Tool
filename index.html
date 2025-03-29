@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Merger Tool</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <script src="https://unpkg.com/downloadjs@1.4.7/download.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header class="app-header">
+            <h1 class="app-title">PDF Merger Tool</h1>
+            <p class="app-subtitle">Streamlining document processing for Western Coalfields Limited</p>
+        </header>
+        
+        <main class="app-body">
+            <div class="intro-box">
+                <div class="intro-title">
+                    <i class="fas fa-info-circle"></i> About This Tool
+                </div>
+                <p class="intro-text">
+                    This tool is designed for <strong>Western Coalfields Limited</strong> E-office users to optimize PDF file handling and ensure smooth document uploads to the E-office system.
+                </p>
+                <p class="intro-text">
+                    Key benefits:
+                </p>
+                <ul class="intro-bullets">
+                    <li>Process multiple PDFs for E-office uploads</li>
+                    <li>Automatically comply with E-office file size restrictions (20MB limit)</li>
+                    <li>Preserve document quality while reducing file size</li>
+                    <li>Verify page counts to ensure document integrity</li>
+                    <li>Split large files into E-office compatible segments</li>
+                    <li>Save time and streamline document handling workflow</li>
+                </ul>
+            </div>
+            
+            <div id="dropzone" class="dropzone">
+                <i class="fas fa-file-pdf dropzone-icon"></i>
+                <p class="dropzone-text">Drag and drop PDF files here</p>
+                <p class="dropzone-subtext">or click to select files</p>
+                <input type="file" id="fileInput" multiple accept=".pdf" style="display: none;">
+            </div>
+            
+            <div id="fileList" class="file-list"></div>
+            
+            <button id="mergeBtn" class="btn btn-primary btn-block" disabled>
+                <i class="fas fa-object-group"></i> Merge PDFs
+            </button>
+            
+            <div id="loading" class="loading">
+                <div class="spinner"></div>
+                <p class="loading-text">Processing your files...</p>
+            </div>
+            
+            <div id="resultContainer" class="result-container">
+                <h2 class="section-title">Processed Result</h2>
+                
+                <div id="pageCountSummary" class="page-count-summary"></div>
+                
+                <div id="resultContent"></div>
+                
+                <div class="new-merge-btn-container">
+                    <button id="newMergeBtn" class="btn btn-secondary">
+                        <i class="fas fa-redo-alt"></i> Start New Merge
+                    </button>
+                </div>
+            </div>
+        </main>
+        
+        <footer class="app-footer">
+            <p>For Western Coalfields Limited E-office Use Only</p>
+            <p>Designed by- <span class="designer-signature">Pratik Bihari</span> | <span class="wcl-branding">WCL MM Department</span></p>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html> 
