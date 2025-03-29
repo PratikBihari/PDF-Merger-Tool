@@ -191,102 +191,143 @@ document.addEventListener('DOMContentLoaded', function() {
                     <p class="split-files-info" style="margin-bottom: 15px; color: #0056b3;">Each part is guaranteed to be under 20MB for E-office uploads.</p>
                 `;
                 
-                // Size-based splitting approach
-                const safeMaxBytes = MAX_SIZE_BYTES * 0.95; // 95% of 20MB = 19MB (safety margin)
+                // Initialize result container with a loading indicator
+                resultContent.innerHTML = resultHtml + `
+                    <div id="splitStatus" class="alert alert-info text-center">
+                        <i class="fas fa-spinner fa-spin"></i> Calculating optimal split points...
+                    </div>
+                `;
                 
-                // Create a processing indicator
-                const processingDiv = document.createElement('div');
-                processingDiv.className = 'alert alert-info text-center';
-                processingDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing PDF splits...';
-                resultContent.innerHTML = resultHtml;
-                resultContent.appendChild(processingDiv);
-                
-                // Process the splits
                 try {
-                    // Load the merged PDF for splitting
-                    const pdfToSplit = await PDFLib.PDFDocument.load(mergedPdfBytes);
-                    const parts = []; // To store our split parts
-                    let partIndex = 1;
-                    let currentPartDoc = await PDFLib.PDFDocument.create();
-                    let currentPartSize = 0;
-                    let pagesInCurrentPart = 0;
+                    // Calculate optimal split strategy for even distribution
+                    const splitStatus = document.getElementById('splitStatus');
                     
-                    // Process each page individually
-                    for (let i = 0; i < totalPages; i++) {
-                        // Update processing indicator
-                        processingDiv.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Processing page ${i+1} of ${totalPages}...`;
+                    // Calculate optimal number of parts based on file size
+                    const optimalNumParts = Math.ceil(mergedSize / (MAX_SIZE_BYTES * 0.9)); // Use 90% of limit for safety
+                    const pdfToSplit = await PDFLib.PDFDocument.load(mergedPdfBytes);
+                    
+                    // Collect info about each page to make better splitting decisions
+                    splitStatus.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analyzing PDF pages...';
+                    
+                    // Binary split approach - try different page distributions until we find working splits
+                    // that stay under the size limit while distributing content evenly
+                    const parts = [];
+                    let remainingPages = [...Array(totalPages).keys()]; // 0 to totalPages-1
+                    let partIndex = 1;
+                    
+                    // Determine how to distribute pages evenly
+                    const targetPagesPerPart = Math.ceil(totalPages / optimalNumParts);
+                    
+                    while (remainingPages.length > 0) {
+                        splitStatus.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Creating part ${partIndex} of approximately ${optimalNumParts}...`;
                         
-                        // Copy single page
-                        const [currentPage] = await currentPartDoc.copyPages(pdfToSplit, [i]);
-                        currentPartDoc.addPage(currentPage);
-                        pagesInCurrentPart++;
+                        // Start with a conservative approach - take fewer pages than the target
+                        let pagesToTry = Math.min(targetPagesPerPart, remainingPages.length);
+                        let pageIndices = remainingPages.slice(0, pagesToTry);
                         
-                        // Save and check size
-                        const currentBytes = await currentPartDoc.save();
-                        currentPartSize = currentBytes.length;
+                        // Binary search to find the maximum number of pages that fit under 20MB
+                        let minPages = 1;
+                        let maxPages = pagesToTry;
+                        let currentSize = 0;
+                        let currentBytes = null;
                         
-                        // If this part is approaching size limit (or it's the last page), finalize it
-                        const isLastPage = (i === totalPages - 1);
-                        
-                        if (currentPartSize > safeMaxBytes || isLastPage) {
-                            // If we're over size limit with more than one page, back up one page
-                            if (currentPartSize > safeMaxBytes && pagesInCurrentPart > 1) {
-                                // Create a new document with all pages except the last one
-                                const revisedDoc = await PDFLib.PDFDocument.create();
-                                const pageIndices = [];
-                                for (let j = i - pagesInCurrentPart + 1; j < i; j++) {
-                                    pageIndices.push(j);
-                                }
-                                
-                                const revisedPages = await revisedDoc.copyPages(pdfToSplit, pageIndices);
-                                revisedPages.forEach(page => revisedDoc.addPage(page));
-                                
-                                const revisedBytes = await revisedDoc.save();
-                                
-                                // Save this part
-                                parts.push({
-                                    index: partIndex,
-                                    pages: pagesInCurrentPart - 1, // one less page
-                                    pageRange: `${i - pagesInCurrentPart + 1}-${i-1}`,
-                                    size: revisedBytes.length,
-                                    data: revisedBytes
-                                });
-                                
-                                // Process this page again in a new part
-                                i--; // Back up to reprocess this page
-                            } else {
-                                // This part is good to go
-                                parts.push({
-                                    index: partIndex,
-                                    pages: pagesInCurrentPart,
-                                    pageRange: `${i - pagesInCurrentPart + 1}-${i}`,
-                                    size: currentPartSize,
-                                    data: currentBytes
-                                });
-                            }
+                        while (minPages <= maxPages) {
+                            const middlePoint = Math.floor((minPages + maxPages) / 2);
+                            pageIndices = remainingPages.slice(0, middlePoint);
                             
-                            // Start a new part (unless this was the last page)
-                            if (!isLastPage || (currentPartSize > safeMaxBytes && pagesInCurrentPart > 1)) {
-                                partIndex++;
-                                currentPartDoc = await PDFLib.PDFDocument.create();
-                                pagesInCurrentPart = 0;
+                            // Create a test PDF with these pages
+                            const testDoc = await PDFLib.PDFDocument.create();
+                            const pagesToCopy = await testDoc.copyPages(pdfToSplit, pageIndices);
+                            pagesToCopy.forEach(page => testDoc.addPage(page));
+                            
+                            // Check the size
+                            const testBytes = await testDoc.save();
+                            const testSize = testBytes.length;
+                            
+                            splitStatus.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Testing ${middlePoint} pages (${formatFileSize(testSize)})...`;
+                            
+                            if (testSize <= MAX_SIZE_BYTES) {
+                                // This fits, try adding more pages
+                                minPages = middlePoint + 1;
+                                currentSize = testSize;
+                                currentBytes = testBytes;
+                            } else {
+                                // Too big, try fewer pages
+                                maxPages = middlePoint - 1;
                             }
                         }
+                        
+                        // maxPages now contains the maximum number of pages that fit under 20MB
+                        const finalPageCount = maxPages;
+                        pageIndices = remainingPages.slice(0, finalPageCount);
+                        
+                        // If we couldn't fit any pages, take just one page (special case for very large pages)
+                        if (finalPageCount === 0) {
+                            pageIndices = [remainingPages[0]];
+                            
+                            // Create a special part with just one page
+                            const singlePageDoc = await PDFLib.PDFDocument.create();
+                            const pageToCopy = await singlePageDoc.copyPages(pdfToSplit, [remainingPages[0]]);
+                            singlePageDoc.addPage(pageToCopy[0]);
+                            
+                            const singlePageBytes = await singlePageDoc.save();
+                            const singlePageSize = singlePageBytes.length;
+                            
+                            splitStatus.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Processing oversized page (${formatFileSize(singlePageSize)})...`;
+                            
+                            parts.push({
+                                index: partIndex,
+                                pages: 1,
+                                size: singlePageSize,
+                                data: singlePageBytes,
+                                pageNumbers: [remainingPages[0] + 1] // +1 for human-readable page numbers
+                            });
+                            
+                            // Remove this page from remaining pages
+                            remainingPages.splice(0, 1);
+                        } else {
+                            // We found a good split point
+                            // If we don't have current bytes (which might happen if our initial guess was too big)
+                            // then create the PDF with the pages we determined
+                            if (!currentBytes) {
+                                const finalDoc = await PDFLib.PDFDocument.create();
+                                const finalPages = await finalDoc.copyPages(pdfToSplit, pageIndices);
+                                finalPages.forEach(page => finalDoc.addPage(page));
+                                currentBytes = await finalDoc.save();
+                                currentSize = currentBytes.length;
+                            }
+                            
+                            // Create a new part with these pages
+                            parts.push({
+                                index: partIndex,
+                                pages: pageIndices.length,
+                                size: currentSize,
+                                data: currentBytes,
+                                pageNumbers: pageIndices.map(idx => idx + 1) // +1 for human-readable page numbers
+                            });
+                            
+                            // Remove these pages from remaining pages
+                            remainingPages.splice(0, pageIndices.length);
+                        }
+                        
+                        partIndex++;
                     }
                     
-                    // Remove processing indicator
-                    resultContent.removeChild(processingDiv);
-                    
-                    // Display all parts
+                    // Done processing, now display all the parts
                     let partsHtml = '';
                     for (const part of parts) {
+                        // Create page range text (e.g., "Pages 1-10")
+                        const pageDesc = part.pageNumbers.length === 1 
+                            ? `Page ${part.pageNumbers[0]}` 
+                            : `Pages ${part.pageNumbers[0]}-${part.pageNumbers[part.pageNumbers.length - 1]}`;
+                        
                         partsHtml += `
                             <div class="file-item">
                                 <div class="file-details">
                                     <div class="file-name"><i class="fas fa-file-pdf"></i> part_${part.index}.pdf</div>
                                     <div class="file-meta">
                                         <span style="font-weight: bold; color: #0056b3;"><i class="fas fa-weight-hanging"></i> ${formatFileSize(part.size)}</span>
-                                        <span><i class="fas fa-file-alt"></i> ${part.pages} pages</span>
+                                        <span><i class="fas fa-file-alt"></i> ${part.pages} pages (${pageDesc})</span>
                                     </div>
                                 </div>
                                 <button class="btn btn-download part-download" data-part-index="${part.index - 1}">
@@ -296,7 +337,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         `;
                     }
                     
-                    // Display the parts
+                    // Replace the status with the actual parts
                     resultContent.innerHTML = resultHtml + partsHtml;
                     
                     // Add event listener for original download
@@ -316,8 +357,11 @@ document.addEventListener('DOMContentLoaded', function() {
                     
                 } catch (error) {
                     console.error('Error splitting PDF:', error);
-                    processingDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Error processing PDF splits.';
-                    processingDiv.className = 'alert alert-danger text-center';
+                    resultContent.innerHTML = resultHtml + `
+                        <div class="alert alert-danger">
+                            <i class="fas fa-exclamation-circle"></i> Error creating PDF splits. Try downloading the original and splitting it manually.
+                        </div>
+                    `;
                     
                     // Still allow downloading the original
                     document.getElementById('downloadOriginal').addEventListener('click', function() {
