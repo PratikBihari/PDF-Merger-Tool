@@ -200,12 +200,16 @@ document.addEventListener('DOMContentLoaded', function() {
                     const endPage = Math.min((i + 1) * pagesPerPart, totalPages);
                     const partPages = endPage - startPage;
                     
+                    // Estimate file size based on page proportion
+                    const estimatedSize = Math.floor((partPages / totalPages) * mergedSize);
+                    
                     resultHtml += `
                         <div class="file-item">
                             <div class="file-details">
                                 <div class="file-name"><i class="fas fa-file-pdf"></i> part_${i+1}.pdf</div>
                                 <div class="file-meta">
-                                    <span><i class="fas fa-file-alt"></i> ~${partPages} pages (approx.)</span>
+                                    <span><i class="fas fa-weight-hanging"></i> ~${formatFileSize(estimatedSize)}</span>
+                                    <span><i class="fas fa-file-alt"></i> ~${partPages} pages</span>
                                 </div>
                             </div>
                             <button class="btn btn-download split-download" data-start="${startPage}" data-end="${endPage}" data-part="${i+1}">
@@ -229,22 +233,41 @@ document.addEventListener('DOMContentLoaded', function() {
                         const endPage = parseInt(this.getAttribute('data-end'));
                         const partNum = this.getAttribute('data-part');
                         
-                        // Create a new PDF with just these pages
-                        const partPdf = await PDFLib.PDFDocument.create();
-                        const pdfToSplit = await PDFLib.PDFDocument.load(mergedPdfBytes);
+                        // Show loading state on the button
+                        const originalButtonText = this.innerHTML;
+                        this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+                        this.disabled = true;
                         
-                        const pageIndices = [];
-                        for (let i = startPage; i < endPage; i++) {
-                            pageIndices.push(i);
+                        try {
+                            // Create a new PDF with just these pages
+                            const partPdf = await PDFLib.PDFDocument.create();
+                            const pdfToSplit = await PDFLib.PDFDocument.load(mergedPdfBytes);
+                            
+                            const pageIndices = [];
+                            for (let i = startPage; i < endPage; i++) {
+                                pageIndices.push(i);
+                            }
+                            
+                            const copiedPages = await partPdf.copyPages(pdfToSplit, pageIndices);
+                            copiedPages.forEach(page => partPdf.addPage(page));
+                            
+                            const partPdfBytes = await partPdf.save();
+                            const partPdfBlob = new Blob([partPdfBytes], { type: 'application/pdf' });
+                            
+                            // Update file size in the UI with actual size
+                            const actualSize = partPdfBytes.length;
+                            const fileSizeElement = this.closest('.file-item').querySelector('.fa-weight-hanging').parentNode;
+                            fileSizeElement.innerHTML = `<i class="fas fa-weight-hanging"></i> ${formatFileSize(actualSize)}`;
+                            
+                            download(partPdfBlob, `part_${partNum}.pdf`, 'application/pdf');
+                        } catch (error) {
+                            console.error('Error splitting PDF:', error);
+                            alert('Error creating split PDF. Please try again.');
+                        } finally {
+                            // Restore button state
+                            this.innerHTML = originalButtonText;
+                            this.disabled = false;
                         }
-                        
-                        const copiedPages = await partPdf.copyPages(pdfToSplit, pageIndices);
-                        copiedPages.forEach(page => partPdf.addPage(page));
-                        
-                        const partPdfBytes = await partPdf.save();
-                        const partPdfBlob = new Blob([partPdfBytes], { type: 'application/pdf' });
-                        
-                        download(partPdfBlob, `part_${partNum}.pdf`, 'application/pdf');
                     });
                 });
                 
