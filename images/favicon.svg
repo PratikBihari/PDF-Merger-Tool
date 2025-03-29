@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- Background -->
+  <rect width="64" height="64" rx="8" fill="#f44336" />
+  
+  <!-- PDF Document Icons -->
+  <rect x="12" y="14" width="24" height="30" rx="2" fill="white" />
+  <rect x="28" y="20" width="24" height="30" rx="2" fill="white" />
+  
+  <!-- PDF Text -->
+  <text x="17" y="32" font-family="Arial" font-weight="bold" font-size="10" fill="#f44336">PDF</text>
+  <text x="33" y="38" font-family="Arial" font-weight="bold" font-size="10" fill="#f44336">PDF</text>
+  
+  <!-- Merge Arrow -->
+  <path d="M40 46 L48 46 L44 54 Z" fill="#2e7d32" />
+</svg> 
