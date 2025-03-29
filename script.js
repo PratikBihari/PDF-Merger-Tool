@@ -188,6 +188,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         </button>
                     </div>
                     <h3 class="section-title" style="margin-top: 25px; font-size: 1.3rem;">E-office Compatible Split Files</h3>
+                    <p class="split-files-info" style="margin-bottom: 15px; color: #0056b3;">Each part is under 20MB for easy E-office uploading.</p>
                 `;
                 
                 // Calculate how many parts we need
@@ -208,7 +209,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             <div class="file-details">
                                 <div class="file-name"><i class="fas fa-file-pdf"></i> part_${i+1}.pdf</div>
                                 <div class="file-meta">
-                                    <span><i class="fas fa-weight-hanging"></i> ~${formatFileSize(estimatedSize)}</span>
+                                    <span style="font-weight: bold; color: #0056b3;"><i class="fas fa-weight-hanging"></i> ~${formatFileSize(estimatedSize)}</span>
                                     <span><i class="fas fa-file-alt"></i> ~${partPages} pages</span>
                                 </div>
                             </div>
@@ -258,6 +259,8 @@ document.addEventListener('DOMContentLoaded', function() {
                             const actualSize = partPdfBytes.length;
                             const fileSizeElement = this.closest('.file-item').querySelector('.fa-weight-hanging').parentNode;
                             fileSizeElement.innerHTML = `<i class="fas fa-weight-hanging"></i> ${formatFileSize(actualSize)}`;
+                            fileSizeElement.style.fontWeight = 'bold';
+                            fileSizeElement.style.color = '#0056b3';
                             
                             download(partPdfBlob, `part_${partNum}.pdf`, 'application/pdf');
                         } catch (error) {
