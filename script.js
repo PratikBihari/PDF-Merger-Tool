@@ -194,7 +194,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 // Show initial processing message
                 resultContent.innerHTML = resultHtml + `
                     <div id="splitStatus" class="alert alert-info text-center">
-                        <i class="fas fa-spinner fa-spin"></i> Preparing PDF splits...
+                        <i class="fas fa-spinner fa-spin"></i> Creating size-optimized PDF splits...
                     </div>
                 `;
                 
@@ -202,166 +202,53 @@ document.addEventListener('DOMContentLoaded', function() {
                     // Define safe size limit (18MB)
                     const SAFE_SIZE_LIMIT = 18 * 1024 * 1024;
                     
+                    // Calculate total number of parts needed based on file size only
+                    const numParts = Math.ceil(mergedSize / SAFE_SIZE_LIMIT);
+                    
                     // Get the status element for updates
                     const splitStatus = document.getElementById('splitStatus');
                     
-                    // First calculate how many parts we need based on file size
-                    const estimatedParts = Math.ceil(mergedSize / SAFE_SIZE_LIMIT);
-                    splitStatus.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Creating ${estimatedParts} optimized splits...`;
-                    
-                    // Load PDF for analysis
+                    // Load PDF for splitting
                     const pdfToSplit = await PDFLib.PDFDocument.load(mergedPdfBytes);
-                    
-                    // Create an array to hold our split parts
                     const parts = [];
                     
-                    // If the PDF is very small or has only one page, handle specially
-                    if (totalPages === 1) {
-                        if (mergedSize <= SAFE_SIZE_LIMIT) {
-                            // Just one small page, use the original
-                            parts.push({
-                                index: 1,
-                                pages: 1,
-                                pageRange: "1",
-                                size: mergedSize,
-                                data: mergedPdfBytes
-                            });
-                        } else {
-                            // One large page that exceeds our limit
-                            parts.push({
-                                index: 1,
-                                pages: 1,
-                                pageRange: "1",
-                                size: mergedSize,
-                                data: mergedPdfBytes,
-                                oversized: true
-                            });
+                    // Split document into approximately equal size parts
+                    for (let partIndex = 0; partIndex < numParts; partIndex++) {
+                        splitStatus.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Creating part ${partIndex + 1} of ${numParts}...`;
+                        
+                        // Create a new PDF document for this part
+                        const partDoc = await PDFLib.PDFDocument.create();
+                        
+                        // Determine page range for this part
+                        const startPageIndex = Math.floor((totalPages / numParts) * partIndex);
+                        const endPageIndex = (partIndex === numParts - 1) 
+                            ? totalPages - 1 
+                            : Math.floor((totalPages / numParts) * (partIndex + 1)) - 1;
+                        
+                        // Copy pages to this part
+                        const pageIndices = [];
+                        for (let i = startPageIndex; i <= endPageIndex; i++) {
+                            pageIndices.push(i);
                         }
-                    } else {
-                        // Multiple pages - start splitting
                         
-                        // Use average page size as initial guide
-                        const avgPageSize = mergedSize / totalPages;
-                        // Initial estimate of pages per part
-                        let pagesPerPart = Math.floor(SAFE_SIZE_LIMIT / avgPageSize * 0.9); // 90% buffer
-                        // Ensure at least 1 page per part
-                        pagesPerPart = Math.max(1, pagesPerPart);
+                        const pagesToAdd = await partDoc.copyPages(pdfToSplit, pageIndices);
+                        pagesToAdd.forEach(page => partDoc.addPage(page));
                         
-                        let partIndex = 1;
-                        let processedPages = 0;
+                        // Save part
+                        const partBytes = await partDoc.save();
                         
-                        // Process pages until we've covered the whole document
-                        while (processedPages < totalPages) {
-                            splitStatus.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Creating part ${partIndex}...`;
-                            
-                            // Calculate how many pages to try in this part
-                            let pagesToTry = Math.min(pagesPerPart, totalPages - processedPages);
-                            const pageIndices = [];
-                            for (let i = 0; i < pagesToTry; i++) {
-                                pageIndices.push(processedPages + i);
-                            }
-                            
-                            // Create test document with these pages
-                            const testDoc = await PDFLib.PDFDocument.create();
-                            const pagesToAdd = await testDoc.copyPages(pdfToSplit, pageIndices);
-                            pagesToAdd.forEach(page => testDoc.addPage(page));
-                            
-                            const testBytes = await testDoc.save();
-                            const testSize = testBytes.length;
-                            
-                            // Check if we need to reduce pages to stay under limit
-                            if (testSize > SAFE_SIZE_LIMIT && pagesToTry > 1) {
-                                // Binary search to find maximum number of pages under limit
-                                let low = 1;
-                                let high = pagesToTry - 1;
-                                let finalPageCount = 0;
-                                let finalBytes = null;
-                                
-                                while (low <= high) {
-                                    const mid = Math.floor((low + high) / 2);
-                                    splitStatus.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Optimizing part ${partIndex} (testing ${mid} pages)...`;
-                                    
-                                    // Test with mid pages
-                                    const binaryDoc = await PDFLib.PDFDocument.create();
-                                    const binaryIndices = [];
-                                    for (let i = 0; i < mid; i++) {
-                                        binaryIndices.push(processedPages + i);
-                                    }
-                                    
-                                    const binaryPages = await binaryDoc.copyPages(pdfToSplit, binaryIndices);
-                                    binaryPages.forEach(page => binaryDoc.addPage(page));
-                                    
-                                    const binaryBytes = await binaryDoc.save();
-                                    const binarySize = binaryBytes.length;
-                                    
-                                    if (binarySize <= SAFE_SIZE_LIMIT) {
-                                        // This fits, try adding more
-                                        low = mid + 1;
-                                        finalPageCount = mid;
-                                        finalBytes = binaryBytes;
-                                    } else {
-                                        // Too large, try fewer pages
-                                        high = mid - 1;
-                                    }
-                                }
-                                
-                                // Use the optimal page count we found
-                                if (finalPageCount > 0) {
-                                    parts.push({
-                                        index: partIndex,
-                                        pages: finalPageCount,
-                                        pageRange: `${processedPages + 1}-${processedPages + finalPageCount}`,
-                                        size: finalBytes.length,
-                                        data: finalBytes
-                                    });
-                                    
-                                    processedPages += finalPageCount;
-                                } else {
-                                    // If even one page is too large
-                                    const singleDoc = await PDFLib.PDFDocument.create();
-                                    const [singlePage] = await singleDoc.copyPages(pdfToSplit, [processedPages]);
-                                    singleDoc.addPage(singlePage);
-                                    
-                                    const singleBytes = await singleDoc.save();
-                                    
-                                    parts.push({
-                                        index: partIndex,
-                                        pages: 1,
-                                        pageRange: `${processedPages + 1}`,
-                                        size: singleBytes.length,
-                                        data: singleBytes,
-                                        oversized: singleBytes.length > SAFE_SIZE_LIMIT
-                                    });
-                                    
-                                    processedPages += 1;
-                                }
-                            } else if (testSize <= SAFE_SIZE_LIMIT || pagesToTry === 1) {
-                                // Current selection fits or we can't reduce further
-                                parts.push({
-                                    index: partIndex,
-                                    pages: pagesToTry,
-                                    pageRange: pagesToTry === 1 ? 
-                                        `${processedPages + 1}` : 
-                                        `${processedPages + 1}-${processedPages + pagesToTry}`,
-                                    size: testSize,
-                                    data: testBytes,
-                                    oversized: testSize > SAFE_SIZE_LIMIT && pagesToTry === 1
-                                });
-                                
-                                processedPages += pagesToTry;
-                            }
-                            
-                            partIndex++;
-                            
-                            // Adjust pages per part based on what we learned
-                            if (pagesToTry > 1 && testSize > SAFE_SIZE_LIMIT) {
-                                // If we had to reduce pages, adjust our estimate
-                                pagesPerPart = Math.max(1, Math.floor(pagesPerPart * 0.8));
-                            }
-                        }
+                        // Add part info
+                        parts.push({
+                            index: partIndex + 1,
+                            pages: pageIndices.length,
+                            pageRange: `${startPageIndex + 1}-${endPageIndex + 1}`,
+                            size: partBytes.length,
+                            data: partBytes,
+                            oversized: partBytes.length > SAFE_SIZE_LIMIT
+                        });
                     }
                     
-                    // Generate HTML for splits
+                    // Generate HTML for all parts
                     let partsHtml = '';
                     
                     for (const part of parts) {
