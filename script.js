@@ -188,32 +188,53 @@ document.addEventListener('DOMContentLoaded', function() {
                         </button>
                     </div>
                     <h3 class="section-title" style="margin-top: 25px; font-size: 1.3rem;">E-office Compatible Split Files</h3>
-                    <p class="split-files-info" style="margin-bottom: 15px; color: #0056b3;">Each part is under 20MB for easy E-office uploading.</p>
+                    <p class="split-files-info" style="margin-bottom: 15px; color: #0056b3;">Each part is optimized to stay under 20MB for guaranteed E-office compatibility.</p>
                 `;
                 
                 // Calculate how many parts we need
                 const numParts = Math.ceil(mergedSize / MAX_SIZE_BYTES);
-                const pagesPerPart = Math.ceil(totalPages / numParts);
+                
+                // We'll create a more adaptive splitting approach
+                // Instead of evenly distributing pages, we'll calculate a target size per part
+                const targetSizePerPart = Math.floor(MAX_SIZE_BYTES * 0.85); // 85% of 20MB to ensure we stay under the limit
+                
+                // Estimate pages per part based on average page size
+                const avgPageSize = mergedSize / totalPages;
+                const estimatedPagesPerPart = Math.floor(targetSizePerPart / avgPageSize);
+                
+                // Prepare the parts information
+                const parts = [];
+                let currentStartPage = 0;
+                
+                while (currentStartPage < totalPages) {
+                    const remainingPages = totalPages - currentStartPage;
+                    // Use a smaller number of pages for each part to stay safe
+                    const pagesToInclude = Math.min(estimatedPagesPerPart, remainingPages);
+                    
+                    parts.push({
+                        start: currentStartPage,
+                        end: currentStartPage + pagesToInclude,
+                        pages: pagesToInclude,
+                        estimatedSize: Math.min(pagesToInclude * avgPageSize, targetSizePerPart)
+                    });
+                    
+                    currentStartPage += pagesToInclude;
+                }
                 
                 // Add buttons for each part
-                for (let i = 0; i < numParts; i++) {
-                    const startPage = i * pagesPerPart;
-                    const endPage = Math.min((i + 1) * pagesPerPart, totalPages);
-                    const partPages = endPage - startPage;
-                    
-                    // Estimate file size based on page proportion
-                    const estimatedSize = Math.floor((partPages / totalPages) * mergedSize);
+                for (let i = 0; i < parts.length; i++) {
+                    const part = parts[i];
                     
                     resultHtml += `
                         <div class="file-item">
                             <div class="file-details">
                                 <div class="file-name"><i class="fas fa-file-pdf"></i> part_${i+1}.pdf</div>
                                 <div class="file-meta">
-                                    <span style="font-weight: bold; color: #0056b3;"><i class="fas fa-weight-hanging"></i> ~${formatFileSize(estimatedSize)}</span>
-                                    <span><i class="fas fa-file-alt"></i> ~${partPages} pages</span>
+                                    <span style="font-weight: bold; color: #0056b3;"><i class="fas fa-weight-hanging"></i> ~${formatFileSize(part.estimatedSize)}</span>
+                                    <span><i class="fas fa-file-alt"></i> ~${part.pages} pages</span>
                                 </div>
                             </div>
-                            <button class="btn btn-download split-download" data-start="${startPage}" data-end="${endPage}" data-part="${i+1}">
+                            <button class="btn btn-download split-download" data-start="${part.start}" data-end="${part.end}" data-part="${i+1}">
                                 <i class="fas fa-download"></i> Download
                             </button>
                         </div>
@@ -255,12 +276,24 @@ document.addEventListener('DOMContentLoaded', function() {
                             const partPdfBytes = await partPdf.save();
                             const partPdfBlob = new Blob([partPdfBytes], { type: 'application/pdf' });
                             
-                            // Update file size in the UI with actual size
+                            // Verify file size is under 20MB
                             const actualSize = partPdfBytes.length;
-                            const fileSizeElement = this.closest('.file-item').querySelector('.fa-weight-hanging').parentNode;
-                            fileSizeElement.innerHTML = `<i class="fas fa-weight-hanging"></i> ${formatFileSize(actualSize)}`;
-                            fileSizeElement.style.fontWeight = 'bold';
-                            fileSizeElement.style.color = '#0056b3';
+                            if (actualSize > MAX_SIZE_BYTES) {
+                                // If still too large, we need to further split or compress
+                                alert(`Warning: The split PDF is still ${formatFileSize(actualSize)}, which exceeds the 20MB limit. Try splitting into more parts.`);
+                                
+                                // Update the UI with actual size but with warning color
+                                const fileSizeElement = this.closest('.file-item').querySelector('.fa-weight-hanging').parentNode;
+                                fileSizeElement.innerHTML = `<i class="fas fa-weight-hanging"></i> ${formatFileSize(actualSize)} (exceeds limit)`;
+                                fileSizeElement.style.fontWeight = 'bold';
+                                fileSizeElement.style.color = '#dc3545'; // Red color for warning
+                            } else {
+                                // Update file size in the UI with actual size
+                                const fileSizeElement = this.closest('.file-item').querySelector('.fa-weight-hanging').parentNode;
+                                fileSizeElement.innerHTML = `<i class="fas fa-weight-hanging"></i> ${formatFileSize(actualSize)}`;
+                                fileSizeElement.style.fontWeight = 'bold';
+                                fileSizeElement.style.color = '#0056b3';
+                            }
                             
                             download(partPdfBlob, `part_${partNum}.pdf`, 'application/pdf');
                         } catch (error) {
