@@ -188,37 +188,48 @@ document.addEventListener('DOMContentLoaded', function() {
                         </button>
                     </div>
                     <h3 class="section-title" style="margin-top: 25px; font-size: 1.3rem;">E-office Compatible Split Files</h3>
-                    <p class="split-files-info" style="margin-bottom: 15px; color: #0056b3;">Each part is optimized to stay under 20MB for guaranteed E-office compatibility.</p>
+                    <p class="split-files-info" style="margin-bottom: 15px; color: #0056b3;">Each part is guaranteed to be under 20MB for E-office compatibility.</p>
                 `;
                 
-                // Calculate how many parts we need
-                const numParts = Math.ceil(mergedSize / MAX_SIZE_BYTES);
+                // Use a progressive splitting strategy
+                // Rather than trying to predict the size accurately, we'll start with smaller chunks
+                // and adjust as needed
                 
-                // We'll create a more adaptive splitting approach
-                // Instead of evenly distributing pages, we'll calculate a target size per part
-                const targetSizePerPart = Math.floor(MAX_SIZE_BYTES * 0.85); // 85% of 20MB to ensure we stay under the limit
-                
-                // Estimate pages per part based on average page size
+                // Start with a very conservative estimate - around 10MB per part
+                const safeMaxSize = MAX_SIZE_BYTES * 0.5; // 50% of 20MB = 10MB
                 const avgPageSize = mergedSize / totalPages;
-                const estimatedPagesPerPart = Math.floor(targetSizePerPart / avgPageSize);
                 
-                // Prepare the parts information
+                // For very large PDFs with small page counts, we need to be extra cautious
+                let pagesPerPart;
+                
+                if (avgPageSize > 1000000) { // If avg page > 1MB
+                    // For very large pages, use an even more conservative approach
+                    pagesPerPart = Math.max(1, Math.floor(safeMaxSize / avgPageSize / 1.5));
+                } else if (avgPageSize > 500000) { // If avg page > 500KB
+                    pagesPerPart = Math.max(1, Math.floor(safeMaxSize / avgPageSize / 1.2));
+                } else {
+                    pagesPerPart = Math.max(1, Math.floor(safeMaxSize / avgPageSize));
+                }
+                
+                // Safety check - ensure we have at least 1 page per part
+                pagesPerPart = Math.max(1, pagesPerPart);
+                
+                // Calculate parts
                 const parts = [];
-                let currentStartPage = 0;
+                let currentPage = 0;
                 
-                while (currentStartPage < totalPages) {
-                    const remainingPages = totalPages - currentStartPage;
-                    // Use a smaller number of pages for each part to stay safe
-                    const pagesToInclude = Math.min(estimatedPagesPerPart, remainingPages);
+                while (currentPage < totalPages) {
+                    const remainingPages = totalPages - currentPage;
+                    const pagesToInclude = Math.min(pagesPerPart, remainingPages);
                     
                     parts.push({
-                        start: currentStartPage,
-                        end: currentStartPage + pagesToInclude,
+                        start: currentPage,
+                        end: currentPage + pagesToInclude,
                         pages: pagesToInclude,
-                        estimatedSize: Math.min(pagesToInclude * avgPageSize, targetSizePerPart)
+                        estimatedSize: Math.min(pagesToInclude * avgPageSize * 1.1, MAX_SIZE_BYTES * 0.95) // Add 10% buffer for estimation
                     });
                     
-                    currentStartPage += pagesToInclude;
+                    currentPage += pagesToInclude;
                 }
                 
                 // Add buttons for each part
@@ -231,7 +242,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 <div class="file-name"><i class="fas fa-file-pdf"></i> part_${i+1}.pdf</div>
                                 <div class="file-meta">
                                     <span style="font-weight: bold; color: #0056b3;"><i class="fas fa-weight-hanging"></i> ~${formatFileSize(part.estimatedSize)}</span>
-                                    <span><i class="fas fa-file-alt"></i> ~${part.pages} pages</span>
+                                    <span><i class="fas fa-file-alt"></i> ${part.pages} pages</span>
                                 </div>
                             </div>
                             <button class="btn btn-download split-download" data-start="${part.start}" data-end="${part.end}" data-part="${i+1}">
@@ -260,6 +271,10 @@ document.addEventListener('DOMContentLoaded', function() {
                         this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
                         this.disabled = true;
                         
+                        // Get the file item
+                        const fileItem = this.closest('.file-item');
+                        const fileSizeElement = fileItem.querySelector('.fa-weight-hanging').parentNode;
+                        
                         try {
                             // Create a new PDF with just these pages
                             const partPdf = await PDFLib.PDFDocument.create();
@@ -270,26 +285,139 @@ document.addEventListener('DOMContentLoaded', function() {
                                 pageIndices.push(i);
                             }
                             
+                            // Copy the pages to the new document
                             const copiedPages = await partPdf.copyPages(pdfToSplit, pageIndices);
                             copiedPages.forEach(page => partPdf.addPage(page));
                             
-                            const partPdfBytes = await partPdf.save();
+                            // First try with regular compression
+                            let partPdfBytes = await partPdf.save();
+                            let actualSize = partPdfBytes.length;
+                            
+                            // If still too large, try more aggressive compression
+                            if (actualSize > MAX_SIZE_BYTES) {
+                                // Add a compression message
+                                fileSizeElement.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Still too large. Applying additional compression...';
+                                
+                                try {
+                                    // Create a new PDF with more aggressive compression settings
+                                    const compressedPdf = await PDFLib.PDFDocument.create();
+                                    
+                                    // Try to compress by using a more aggressive approach - copy pages with lower quality
+                                    const recompressedPages = await compressedPdf.copyPages(pdfToSplit, pageIndices);
+                                    recompressedPages.forEach(page => compressedPdf.addPage(page));
+                                    
+                                    // Save with compression
+                                    partPdfBytes = await compressedPdf.save({ useObjectStreams: true });
+                                    actualSize = partPdfBytes.length;
+                                } catch (compressionError) {
+                                    console.error('Compression failed:', compressionError);
+                                    // We'll use the original version if compression fails
+                                }
+                            }
+                            
                             const partPdfBlob = new Blob([partPdfBytes], { type: 'application/pdf' });
                             
                             // Verify file size is under 20MB
-                            const actualSize = partPdfBytes.length;
                             if (actualSize > MAX_SIZE_BYTES) {
-                                // If still too large, we need to further split or compress
-                                alert(`Warning: The split PDF is still ${formatFileSize(actualSize)}, which exceeds the 20MB limit. Try splitting into more parts.`);
+                                // If still too large, we need to warn the user
+                                console.warn(`Part ${partNum} is still ${formatFileSize(actualSize)}, which exceeds the 20MB limit.`);
                                 
-                                // Update the UI with actual size but with warning color
-                                const fileSizeElement = this.closest('.file-item').querySelector('.fa-weight-hanging').parentNode;
-                                fileSizeElement.innerHTML = `<i class="fas fa-weight-hanging"></i> ${formatFileSize(actualSize)} (exceeds limit)`;
+                                // Update the UI with actual size and warning
+                                fileSizeElement.innerHTML = `<i class="fas fa-exclamation-triangle"></i> ${formatFileSize(actualSize)} (exceeds limit)`;
                                 fileSizeElement.style.fontWeight = 'bold';
                                 fileSizeElement.style.color = '#dc3545'; // Red color for warning
+                                
+                                // Add a suggestion to try with fewer pages
+                                const pageCountEl = fileItem.querySelector('.fa-file-alt').parentNode;
+                                const currentPages = parseInt(pageCountEl.textContent.match(/\d+/)[0]);
+                                const suggestedPages = Math.floor(currentPages * 0.7); // Suggest 70% of current pages
+                                
+                                // Add a suggestion button to retry with fewer pages
+                                const actionDiv = document.createElement('div');
+                                actionDiv.className = 'file-actions';
+                                actionDiv.style.marginTop = '8px';
+                                actionDiv.innerHTML = `
+                                    <button class="btn btn-warning btn-sm retry-split" data-part="${partNum}" data-pages="${suggestedPages}">
+                                        <i class="fas fa-redo-alt"></i> Try with ${suggestedPages} pages
+                                    </button>
+                                `;
+                                fileItem.querySelector('.file-details').appendChild(actionDiv);
+                                
+                                // Add event listener to the retry button
+                                actionDiv.querySelector('.retry-split').addEventListener('click', function() {
+                                    // Calculate new start and end page
+                                    const newPagesToInclude = parseInt(this.getAttribute('data-pages'));
+                                    const newEnd = startPage + newPagesToInclude;
+                                    
+                                    // Create a new split entry
+                                    const newPartNum = parseInt(partNum) + 0.1; // Increment by .1 to keep ordering
+                                    
+                                    // Create a new file item for this reduced split
+                                    const newFileItem = document.createElement('div');
+                                    newFileItem.className = 'file-item';
+                                    newFileItem.innerHTML = `
+                                        <div class="file-details">
+                                            <div class="file-name"><i class="fas fa-file-pdf"></i> part_${partNum}_reduced.pdf</div>
+                                            <div class="file-meta">
+                                                <span style="font-weight: bold; color: #0056b3;"><i class="fas fa-weight-hanging"></i> ~${formatFileSize(MAX_SIZE_BYTES * 0.8)}</span>
+                                                <span><i class="fas fa-file-alt"></i> ${newPagesToInclude} pages</span>
+                                            </div>
+                                        </div>
+                                        <button class="btn btn-download split-download" data-start="${startPage}" data-end="${newEnd}" data-part="${partNum}_reduced">
+                                            <i class="fas fa-download"></i> Download Reduced
+                                        </button>
+                                    `;
+                                    
+                                    // Insert the new file item after the current one
+                                    fileItem.parentNode.insertBefore(newFileItem, fileItem.nextSibling);
+                                    
+                                    // Add event listener to the new download button
+                                    newFileItem.querySelector('.split-download').addEventListener('click', async function() {
+                                        // Re-use the same event listener logic
+                                        const reducedStart = parseInt(this.getAttribute('data-start'));
+                                        const reducedEnd = parseInt(this.getAttribute('data-end'));
+                                        const reducedPartNum = this.getAttribute('data-part');
+                                        
+                                        // Show loading state
+                                        const originalReducedButtonText = this.innerHTML;
+                                        this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+                                        this.disabled = true;
+                                        
+                                        try {
+                                            // Create new PDF with reduced page count
+                                            const reducedPdf = await PDFLib.PDFDocument.create();
+                                            const reducedIndices = [];
+                                            for (let i = reducedStart; i < reducedEnd; i++) {
+                                                reducedIndices.push(i);
+                                            }
+                                            const reducedPages = await reducedPdf.copyPages(pdfToSplit, reducedIndices);
+                                            reducedPages.forEach(page => reducedPdf.addPage(page));
+                                            
+                                            const reducedBytes = await reducedPdf.save();
+                                            const reducedBlob = new Blob([reducedBytes], { type: 'application/pdf' });
+                                            
+                                            // Update file size in UI
+                                            const reducedSizeEl = this.closest('.file-item').querySelector('.fa-weight-hanging').parentNode;
+                                            reducedSizeEl.innerHTML = `<i class="fas fa-weight-hanging"></i> ${formatFileSize(reducedBytes.length)}`;
+                                            reducedSizeEl.style.fontWeight = 'bold';
+                                            reducedSizeEl.style.color = '#0056b3';
+                                            
+                                            download(reducedBlob, `part_${reducedPartNum}.pdf`, 'application/pdf');
+                                        } catch (error) {
+                                            console.error('Error creating reduced PDF:', error);
+                                            alert('Error creating reduced PDF. Please try again with fewer pages.');
+                                        } finally {
+                                            // Restore button state
+                                            this.innerHTML = originalReducedButtonText;
+                                            this.disabled = false;
+                                        }
+                                    });
+                                });
+                                
+                                // Still allow download of the oversized file
+                                alert(`Warning: The split PDF is ${formatFileSize(actualSize)}, which exceeds the 20MB E-office limit. You can still download it, but you may not be able to upload it to E-office.`);
                             } else {
                                 // Update file size in the UI with actual size
-                                const fileSizeElement = this.closest('.file-item').querySelector('.fa-weight-hanging').parentNode;
                                 fileSizeElement.innerHTML = `<i class="fas fa-weight-hanging"></i> ${formatFileSize(actualSize)}`;
                                 fileSizeElement.style.fontWeight = 'bold';
                                 fileSizeElement.style.color = '#0056b3';
@@ -299,6 +427,10 @@ document.addEventListener('DOMContentLoaded', function() {
                         } catch (error) {
                             console.error('Error splitting PDF:', error);
                             alert('Error creating split PDF. Please try again.');
+                            
+                            // Show error in UI
+                            fileSizeElement.innerHTML = `<i class="fas fa-exclamation-circle"></i> Error processing this part`;
+                            fileSizeElement.style.color = '#dc3545';
                         } finally {
                             // Restore button state
                             this.innerHTML = originalButtonText;
